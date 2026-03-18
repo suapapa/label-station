@@ -1,0 +1,7 @@
+node_modules
+fe/node_modules
+fe/dist
+.git
+label-station
+.agents
+*.env
