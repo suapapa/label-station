@@ -1,4 +1,3 @@
-
 services:
   # 1. Backend Service (also serves built Frontend statically by default)
   label-station:
@@ -10,15 +9,23 @@ services:
       # Defaults for environment variables.
       # Change these according to your printer setup.
       - BROTHER_QL_MODEL=${BROTHER_QL_MODEL:-QL-800}
-      - BROTHER_QL_BACKEND=${BROTHER_QL_BACKEND:-network}
-      
+      - BROTHER_QL_BACKEND=${BROTHER_QL_BACKEND:-linux_kernel}
+
       # NOTE: For `network` backend, inside the Docker container, `127.0.0.1` 
       # won't map to the host machine. Instead use `host.docker.internal` 
       # or specify the actual local IP address (e.g., 192.168.1.100).
-      - BROTHER_QL_PRINTER=${BROTHER_QL_PRINTER:-host.docker.internal}
-      
+      - BROTHER_QL_PRINTER=${BROTHER_QL_PRINTER:-/dev/usb/lp0}
+
       # The Go server listens on 8080 by default.
       - PORT=8080
+    volumes:
+      - /sys:/sys:ro
+      # If you are using USB printer (linux_kernel backend) on Linux host,
+      # you might also need to map the device file:
+      # devices:
+      #   - "/dev/usb/lp0:/dev/usb/lp0"
+      # Or run with full privileges (less secure):
+      # privileged: true
     restart: unless-stopped
 
   # 2. Frontend Production-ready Service (Served via Nginx)
@@ -32,5 +39,3 @@ services:
     depends_on:
       - label-station
     restart: unless-stopped
-
-
