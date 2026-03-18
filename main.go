@@ -61,27 +61,31 @@ func main() {
 	mux.HandleFunc("GET /api/v1/info", handleInfo)
 	mux.HandleFunc("POST /api/v1/print", handlePrint)
 
-	// Serve Frontend
-	fs := http.FileServer(http.Dir("./fe/dist"))
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/") {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		// If file doesn't exist, serve index.html (for SPA router, though maybe not needed for simple app)
-		path := r.URL.Path
-		if path == "/" {
+	// Serve Frontend if exists
+	if _, err := os.Stat("./fe/dist"); err == nil {
+		fs := http.FileServer(http.Dir("./fe/dist"))
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			// If file doesn't exist, serve index.html (for SPA router, though maybe not needed for simple app)
+			path := r.URL.Path
+			if path == "/" {
+				fs.ServeHTTP(w, r)
+				return
+			}
+
+			// Fallback to index.html if file doesn't exist
+			if _, err := os.Stat("fe/dist" + path); os.IsNotExist(err) {
+				http.ServeFile(w, r, "fe/dist/index.html")
+				return
+			}
 			fs.ServeHTTP(w, r)
-			return
-		}
-		
-		// Fallback to index.html if file doesn't exist
-		if _, err := os.Stat("fe/dist" + path); os.IsNotExist(err) {
-			http.ServeFile(w, r, "fe/dist/index.html")
-			return
-		}
-		fs.ServeHTTP(w, r)
-	})
+		})
+	} else {
+		fmt.Println("Frontend static files (./fe/dist) not found. Starting in API-only mode.")
+	}
 
 	// Wrap with simple CORS middleware for development
 	handler := corsMiddleware(mux)
