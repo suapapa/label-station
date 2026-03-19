@@ -1,19 +1,19 @@
 package main
 
 import (
-	"bytes"
-	"encoding/base64"
-	"encoding/json"
+	"context"
 	"flag"
 	"fmt"
-	"image"
-	_ "image/jpeg"
-	_ "image/png"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	brother_ql "github.com/suapapa/go_brother-ql"
 )
 
@@ -24,23 +24,6 @@ var (
 	port    int
 )
 
-type PrintRequest struct {
-	Image   string         `json:"image"` // Base64 encoded image
-	Label   string         `json:"label"` // e.g., "62", "29x90"
-	Options ConvertOptions `json:"options"`
-}
-
-type ConvertOptions struct {
-	Cut        bool    `json:"cut"`
-	Dither     bool    `json:"dither"`
-	DitherAlgo string  `json:"dither_algo"`
-	Compress   bool    `json:"compress"`
-	Red        bool    `json:"red"`
-	Rotate     string  `json:"rotate"`
-	Dpi600     bool    `json:"dpi600"`
-	Hq         bool    `json:"hq"`
-	Threshold  float64 `json:"threshold"`
-}
 
 func main() {
 	flag.StringVar(&model, "model", os.Getenv("BROTHER_QL_MODEL"), "Printer model (e.g., QL-800, QL-700)")
@@ -55,141 +38,97 @@ func main() {
 		os.Exit(1)
 	}
 
-	mux := http.NewServeMux()
+	brd, err := brother_ql.NewLabelPrinter(model, backend, printer)
+	if err != nil {
+		fmt.Printf("Error connecting to printer: %v\n", err)
+		os.Exit(1)
+	}
+	defer brd.Close()
+
+	svc := &Service{printer: brd}
+
+	r := gin.Default()
+
+	// Wrap with simple CORS middleware
+	r.Use(corsMiddleware())
 
 	// API endpoints
-	mux.HandleFunc("GET /api/v1/info", handleInfo)
-	mux.HandleFunc("POST /api/v1/print", handlePrint)
+	r.GET("/api/v1/info", svc.handleInfo)
+	r.POST("/api/v1/print", svc.handlePrint)
 
 	// Serve Frontend if exists
 	if _, err := os.Stat("./fe/dist"); err == nil {
-		fs := http.FileServer(http.Dir("./fe/dist"))
-		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			if strings.HasPrefix(r.URL.Path, "/api/") {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			// If file doesn't exist, serve index.html (for SPA router, though maybe not needed for simple app)
-			path := r.URL.Path
-			if path == "/" {
-				fs.ServeHTTP(w, r)
+		r.Static("/assets", "./fe/dist/assets")
+
+		r.NoRoute(func(c *gin.Context) {
+			path := c.Request.URL.Path
+			if strings.HasPrefix(path, "/api/") {
+				c.JSON(http.StatusNotFound, gin.H{"error": "route not found"})
 				return
 			}
 
-			// Fallback to index.html if file doesn't exist
-			if _, err := os.Stat("fe/dist" + path); os.IsNotExist(err) {
-				http.ServeFile(w, r, "fe/dist/index.html")
+			if path == "/" {
+				c.File("./fe/dist/index.html")
 				return
 			}
-			fs.ServeHTTP(w, r)
+
+			fpath := filepath.Join("fe", "dist", path)
+			if _, err := os.Stat(fpath); os.IsNotExist(err) {
+				c.File("./fe/dist/index.html")
+				return
+			}
+			c.File(fpath)
 		})
 	} else {
 		fmt.Println("Frontend static files (./fe/dist) not found. Starting in API-only mode.")
 	}
 
-	// Wrap with simple CORS middleware for development
-	handler := corsMiddleware(mux)
+	srv := &http.Server{
+		Addr:    fmt.Sprintf(":%d", port),
+		Handler: r,
+	}
 
-	fmt.Printf("Starting server on :%d\n", port)
-	fmt.Printf("Model: %s, Backend: %s, Printer: %s\n", model, backend, printer)
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), handler))
+	go func() {
+		fmt.Printf("Starting server on :%d\n", port)
+		fmt.Printf("Model: %s, Backend: %s, Printer: %s\n", model, backend, printer)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("listen: %s\n", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("Shutting down server...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatal("Server forced to shutdown:", err)
+	}
+
+	if err := svc.printer.Close(); err != nil {
+		log.Printf("Error closing printer connection: %v\n", err)
+	} else {
+		log.Println("Printer connection closed")
+	}
+
+	log.Println("Server exiting")
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+func corsMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(http.StatusOK)
 			return
 		}
 
-		next.ServeHTTP(w, r)
-	})
+		c.Next()
+	}
 }
 
-func handleInfo(w http.ResponseWriter, r *http.Request) {
-	resp := map[string]interface{}{
-		"model":   model,
-		"backend": backend,
-		"printer": printer,
-		"labels":  brother_ql.AllLabels,
-		"models":  brother_ql.AllModels,
-	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
-}
-
-func handlePrint(w http.ResponseWriter, r *http.Request) {
-	var req PrintRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("invalid request body: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	if req.Image == "" {
-		http.Error(w, "image is required", http.StatusBadRequest)
-		return
-	}
-
-	// Decode Base64 image
-	imgData, err := base64.StdEncoding.DecodeString(req.Image)
-	if err != nil {
-		// Try with data URL stripping
-		if idx := strings.Index(req.Image, ","); idx != -1 {
-			imgData, err = base64.StdEncoding.DecodeString(req.Image[idx+1:])
-		}
-		if err != nil {
-			http.Error(w, fmt.Sprintf("invalid base64 image: %v", err), http.StatusBadRequest)
-			return
-		}
-	}
-
-	img, _, err := image.Decode(bytes.NewReader(imgData))
-	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to decode image: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	// Create printer
-	brd, err := brother_ql.NewLabelPrinter(model, backend, printer)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to connect to printer: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	opts := brother_ql.PrintOptions{
-		Label: req.Label,
-		ConvertOptions: brother_ql.ConvertOptions{
-			Cut:        req.Options.Cut,
-			Dither:     req.Options.Dither,
-			DitherAlgo: req.Options.DitherAlgo,
-			Compress:   req.Options.Compress,
-			Red:        req.Options.Red,
-			Rotate:     req.Options.Rotate,
-			Dpi600:     req.Options.Dpi600,
-			Hq:         req.Options.Hq,
-			Threshold:  req.Options.Threshold,
-		},
-	}
-
-	// If Threshold is 0, default to 70.0 as seen in main.go
-	if opts.Threshold == 0 {
-		opts.Threshold = 70.0
-	}
-	if opts.DitherAlgo == "" {
-		opts.DitherAlgo = "floyd_steinberg"
-	}
-
-	if err := brd.Print([]image.Image{img}, opts); err != nil {
-		http.Error(w, fmt.Sprintf("printing failed: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "success", "message": "Label printed successfully"})
-}
