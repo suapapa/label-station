@@ -23,11 +23,11 @@ function App() {
   const [imgSrc, setImgSrc] = useState('');
 
   // Print Options
-  const [selectedLabel, setSelectedLabel] = useState('62'); // Default to 62mm continuous
-  const [cut, setCut] = useState(true);
-  const [dither, setDither] = useState(false);
-  const [red, setRed] = useState(false);
-  const [rotate, setRotate] = useState('auto');
+  const [selectedLabel, setSelectedLabel] = useState(() => localStorage.getItem('selectedLabel') || '62');
+  const [cut, setCut] = useState(() => localStorage.getItem('cut') !== 'false');
+  const [dither, setDither] = useState(() => localStorage.getItem('dither') === 'true');
+  const [red, setRed] = useState(() => localStorage.getItem('red') === 'true');
+  const [rotate, setRotate] = useState(() => localStorage.getItem('rotate') || 'auto');
 
   const [isPrinting, setIsPrinting] = useState(false);
   const [message, setMessage] = useState({ text: '', type: '' });
@@ -39,15 +39,28 @@ function App() {
   const addrCanvasRef = useRef(null);
   const imgCanvasRef = useRef(null);
 
+  // Save Print Options to localStorage on change
+  useEffect(() => { localStorage.setItem('selectedLabel', selectedLabel); }, [selectedLabel]);
+  useEffect(() => { localStorage.setItem('cut', cut); }, [cut]);
+  useEffect(() => { localStorage.setItem('dither', dither); }, [dither]);
+  useEffect(() => { localStorage.setItem('red', red); }, [red]);
+  useEffect(() => { localStorage.setItem('rotate', rotate); }, [rotate]);
+
   useEffect(() => {
     fetch('/api/v1/info')
       .then((res) => res.json())
       .then((data) => {
         setInfo(data);
         if (data.labels && data.labels.length > 0) {
-          const has62 = data.labels.find((l) => l.Identifier === '62');
-          if (has62) setSelectedLabel('62');
-          else setSelectedLabel(data.labels[0].Identifier);
+          const currentLabel = localStorage.getItem('selectedLabel') || '62';
+          const isValid = data.labels.find((l) => l.Identifier === currentLabel);
+          if (isValid) {
+            setSelectedLabel(currentLabel);
+          } else {
+            const has62 = data.labels.find((l) => l.Identifier === '62');
+            if (has62) setSelectedLabel('62');
+            else setSelectedLabel(data.labels[0].Identifier);
+          }
         }
       })
       .catch((err) => setMessage({ text: 'Failed to connect to backend', type: 'error' }));
@@ -341,7 +354,7 @@ function App() {
                 <div className="input-group">
                   <label>Upload Image</label>
                   <input type="file" accept="image/*" onChange={handleFileChange} />
-                  <p className="help-text">JPG, PNG allowed. Will auto-scale.</p>
+                  <p className="help-text">JPG, PNG, WEBP allowed. Will auto-scale.</p>
                 </div>
               </div>
             )}
@@ -356,7 +369,14 @@ function App() {
 
         <div className="right-panel">
           <div className="preview-container">
-            <div className="preview-title">Live Preview</div>
+            <div className="preview-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+              <span>Live Preview</span>
+              <span style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.05)', color: 'var(--text-subtle)', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                {rotate === 'auto' && 'Auto'}
+                {rotate === '0' && 'Portrait (세로)'}
+                {rotate === '90' && 'Landscape (가로)'}
+              </span>
+            </div>
             <div 
               className={`preview-box ${activeTab} ${isDragging ? 'dragging' : ''}`}
               onDragOver={handleDragOver}
@@ -405,6 +425,26 @@ function App() {
                       <option value="62">62 mm</option>
                     )}
                   </select>
+                </div>
+
+                <div className="input-group">
+                  <label>Orientation</label>
+                  <div className="sub-tabs" style={{ width: '100%', padding: '4px' }}>
+                    {[
+                      { label: 'Auto', value: 'auto' },
+                      { label: 'Portrait (세로)', value: '0' },
+                      { label: 'Landscape (가로)', value: '90' }
+                    ].map((opt) => (
+                      <button
+                        key={opt.value}
+                        className={`sub-tab-btn ${rotate === opt.value ? 'active' : ''}`}
+                        onClick={() => setRotate(opt.value)}
+                        style={{ flex: 1, padding: '0.6rem', textAlign: 'center' }}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="checkbox-group">
