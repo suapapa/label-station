@@ -55,7 +55,6 @@
 
 .settings-toggle:hover {
   background: rgba(255, 255, 255, 0.07);
-  transform: rotate(45deg);
   border-color: rgba(16, 185, 129, 0.4);
   box-shadow: 0 0 15px rgba(16, 185, 129, 0.2);
 }
@@ -77,6 +76,27 @@
   backdrop-filter: blur(8px);
   animation: slideDown 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
   box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+
+.notification .close-notification {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 1.25rem;
+  cursor: pointer;
+  padding: 0.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.6;
+  transition: all 0.2s;
+  margin-left: 0.5rem;
+  border-radius: 4px;
+}
+
+.notification .close-notification:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 @keyframes slideDown {

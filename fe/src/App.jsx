@@ -105,6 +105,16 @@ function App() {
     }
   }, [imgSrc, activeTab]);
 
+  useEffect(() => {
+    if (message.text && (message.type === 'success' || message.type === 'error')) {
+      const duration = message.type === 'success' ? 3000 : 5000;
+      const timer = setTimeout(() => {
+        setMessage({ text: '', type: '' });
+      }, duration);
+      return () => clearTimeout(timer);
+    }
+  }, [message]);
+
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     handleFile(file);
@@ -210,7 +220,12 @@ function App() {
           {message.type === 'error' && '🚨 '}
           {message.type === 'success' && '✅ '}
           {message.type === 'info' && '⏳ '}
-          {message.text}
+          <span>{message.text}</span>
+          {message.type !== 'info' && (
+            <button className="close-notification" onClick={() => setMessage({ text: '', type: '' })} aria-label="Close">
+              ×
+            </button>
+          )}
         </div>
       )}
 
