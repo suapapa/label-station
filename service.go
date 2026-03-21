@@ -9,6 +9,7 @@ import (
 	_ "image/png"
 	_ "golang.org/x/image/webp"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 
@@ -119,3 +120,20 @@ func (s *Service) handlePrint(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Label printed successfully"})
 }
+
+func (s *Service) handlePing(c *gin.Context) {
+	if strings.HasPrefix(printer, "/") {
+		if _, err := os.Stat(printer); os.IsNotExist(err) {
+			c.JSON(http.StatusOK, gin.H{"status": "offline"})
+			return
+		}
+	} else if backend == "linux_kernel" {
+		// Fallback for linux_kernel backend if printer was not fully specified as path
+		if _, err := os.Stat("/dev/usb/lp0"); os.IsNotExist(err) {
+			c.JSON(http.StatusOK, gin.H{"status": "offline"})
+			return
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "online"})
+}
+

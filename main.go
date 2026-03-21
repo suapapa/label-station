@@ -54,6 +54,7 @@ func main() {
 
 	// API endpoints
 	r.GET("/api/v1/info", svc.handleInfo)
+	r.GET("/api/v1/ping", svc.handlePing)
 	r.POST("/api/v1/print", svc.handlePrint)
 
 	// Serve Frontend if exists

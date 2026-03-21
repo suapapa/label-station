@@ -35,6 +35,7 @@ function App() {
   // UI States
   const [showSettings, setShowSettings] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [printerStatus, setPrinterStatus] = useState('checking'); // 'online', 'offline', 'checking'
 
   const addrCanvasRef = useRef(null);
   const imgCanvasRef = useRef(null);
@@ -45,6 +46,19 @@ function App() {
   useEffect(() => { localStorage.setItem('dither', dither); }, [dither]);
   useEffect(() => { localStorage.setItem('red', red); }, [red]);
   useEffect(() => { localStorage.setItem('rotate', rotate); }, [rotate]);
+
+  useEffect(() => {
+    const checkStatus = () => {
+      fetch('/api/v1/ping')
+        .then((res) => res.json())
+        .then((data) => setPrinterStatus(data.status))
+        .catch(() => setPrinterStatus('offline'));
+    };
+
+    checkStatus();
+    const timer = setInterval(checkStatus, 5000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     fetch('/api/v1/info')
@@ -232,7 +246,14 @@ function App() {
       <header className="header">
         <div className="title-container">
           <h1>Label Station</h1>
-          {info && <div className="subtitle">{info.model}</div>}
+          {info && (
+            <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginTop: '0.25rem' }}>
+              <div className="subtitle">{info.model}</div>
+              <span className={`status-badge ${printerStatus}`}>
+                {printerStatus === 'online' ? '● Online' : printerStatus === 'offline' ? '○ Offline' : '○ Offline'}
+              </span>
+            </div>
+          )}
         </div>
         
         <button className="settings-toggle" onClick={() => setShowSettings(true)} title="Settings">
