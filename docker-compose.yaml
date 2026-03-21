@@ -1,7 +1,7 @@
 services:
   # 1. Backend Service (also serves built Frontend statically by default)
   label-station:
-    build: .
+    image: ghcr.io/suapapa/label-station:latest
     container_name: label-station-backend
     ports:
       - "8080:8080"
@@ -24,8 +24,7 @@ services:
   # 2. Frontend Production-ready Service (Served via Nginx)
   # Built static files served from Nginx which proxies /api requests.
   label-station-fe:
-    build:
-      context: ./fe
+    image: ghcr.io/suapapa/label-station-fe:latest
     container_name: label-station-frontend
     ports:
       - "8081:80"
