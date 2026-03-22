@@ -8,10 +8,11 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	_ "golang.org/x/image/webp"
+	"log"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	brother_ql "github.com/suapapa/go_brother-ql"
@@ -113,6 +114,11 @@ func (s *Service) handlePrint(c *gin.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.printer == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "printer not connected"})
+		return
+	}
+
 	if err := s.printer.Print([]image.Image{img}, opts); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("printing failed: %v", err)})
 		return
@@ -122,18 +128,40 @@ func (s *Service) handlePrint(c *gin.Context) {
 }
 
 func (s *Service) handlePing(c *gin.Context) {
-	if strings.HasPrefix(printer, "/") {
-		if _, err := os.Stat(printer); os.IsNotExist(err) {
-			c.JSON(http.StatusOK, gin.H{"status": "offline"})
-			return
-		}
-	} else if backend == "linux_kernel" {
-		// Fallback for linux_kernel backend if printer was not fully specified as path
-		if _, err := os.Stat("/dev/usb/lp0"); os.IsNotExist(err) {
-			c.JSON(http.StatusOK, gin.H{"status": "offline"})
-			return
-		}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.printer != nil && s.printer.IsLive() {
+		c.JSON(http.StatusOK, gin.H{"status": "online"})
+	} else {
+		c.JSON(http.StatusOK, gin.H{"status": "offline"})
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "online"})
+}
+
+func (s *Service) startReconnectLoop() {
+	for {
+		time.Sleep(5 * time.Second)
+		s.mu.Lock()
+		if s.printer != nil {
+			if !s.printer.IsLive() {
+				log.Println("Printer is offline, attempting to reconnect...")
+				if err := s.printer.Reconnect(); err != nil {
+					log.Printf("Reconnect failed: %v\n", err)
+				} else {
+					log.Println("Printer reconnected successfully!")
+				}
+			}
+		} else {
+			log.Println("Printer not initialized, attempting to connect...")
+			newBrd, err := brother_ql.NewLabelPrinter(model, backend, printer)
+			if err == nil {
+				s.printer = newBrd
+				log.Println("Printer connected successfully!")
+			} else {
+				log.Printf("Connection failed: %v\n", err)
+			}
+		}
+		s.mu.Unlock()
+	}
 }
 

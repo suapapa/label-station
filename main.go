@@ -40,12 +40,13 @@ func main() {
 
 	brd, err := brother_ql.NewLabelPrinter(model, backend, printer)
 	if err != nil {
-		fmt.Printf("Error connecting to printer: %v\n", err)
-		os.Exit(1)
+		fmt.Printf("Warning: initial connection to printer failed: %v\n", err)
+	} else {
+		defer brd.Close()
 	}
-	defer brd.Close()
 
 	svc := &Service{printer: brd}
+	go svc.startReconnectLoop()
 
 	r := gin.Default()
 
@@ -108,10 +109,12 @@ func main() {
 		log.Fatal("Server forced to shutdown:", err)
 	}
 
-	if err := svc.printer.Close(); err != nil {
-		log.Printf("Error closing printer connection: %v\n", err)
-	} else {
-		log.Println("Printer connection closed")
+	if svc.printer != nil {
+		if err := svc.printer.Close(); err != nil {
+			log.Printf("Error closing printer connection: %v\n", err)
+		} else {
+			log.Println("Printer connection closed")
+		}
 	}
 
 	log.Println("Server exiting")
