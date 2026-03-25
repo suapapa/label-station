@@ -52,6 +52,7 @@ func main() {
 	{
 		api.GET("/info", svc.HandleInfo)
 		api.GET("/ping", svc.HandlePing)
+		api.GET("/events", svc.HandleEvents)
 		api.POST("/print", svc.HandlePrint)
 	}
 

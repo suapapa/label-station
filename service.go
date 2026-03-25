@@ -47,7 +47,20 @@ type Service struct {
 
 	printer *brother_ql.LabelPrinter
 	mu      sync.RWMutex
+
+	status Status
+	subs   map[chan Status]struct{}
+	subMu  sync.Mutex
 }
+
+// Status represents the printer connectivity state.
+type Status string
+
+const (
+	StatusOnline  Status = "online"
+	StatusOffline Status = "offline"
+	StatusUnknown Status = "checking"
+)
 
 // NewService creates a new Service instance.
 func NewService(model, backend, address string) *Service {
@@ -55,6 +68,8 @@ func NewService(model, backend, address string) *Service {
 		model:   model,
 		backend: backend,
 		address: address,
+		status:  StatusUnknown,
+		subs:    make(map[chan Status]struct{}),
 	}
 }
 
@@ -137,19 +152,69 @@ func (s *Service) HandlePrint(c *gin.Context) {
 // HandlePing checks the current status of the printer.
 func (s *Service) HandlePing(c *gin.Context) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	status := s.status
+	s.mu.RUnlock()
+	c.JSON(http.StatusOK, gin.H{"status": status})
+}
 
-	if s.printer != nil && s.printer.IsLive(c.Request.Context()) {
-		c.JSON(http.StatusOK, gin.H{"status": "online"})
-	} else {
-		c.JSON(http.StatusOK, gin.H{"status": "offline"})
+// HandleEvents provides a Server-Sent Events stream for printer status updates.
+func (s *Service) HandleEvents(c *gin.Context) {
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("Transfer-Encoding", "chunked")
+
+	ch := make(chan Status, 1)
+	s.subscribe(ch)
+	defer s.unsubscribe(ch)
+
+	// Send initial status
+	s.mu.RLock()
+	initialStatus := s.status
+	s.mu.RUnlock()
+
+	c.SSEvent("status", string(initialStatus))
+	c.Writer.Flush()
+
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			return
+		case status := <-ch:
+			c.SSEvent("status", string(status))
+			c.Writer.Flush()
+		}
+	}
+}
+
+func (s *Service) subscribe(ch chan Status) {
+	s.subMu.Lock()
+	defer s.subMu.Unlock()
+	s.subs[ch] = struct{}{}
+}
+
+func (s *Service) unsubscribe(ch chan Status) {
+	s.subMu.Lock()
+	defer s.subMu.Unlock()
+	delete(s.subs, ch)
+}
+
+func (s *Service) broadcast(status Status) {
+	s.subMu.Lock()
+	defer s.subMu.Unlock()
+	for ch := range s.subs {
+		select {
+		case ch <- status:
+		default:
+			// Buffer full, skip this subscriber
+		}
 	}
 }
 
 // StartReconnectLoop maintains the printer connection in the background.
 // It stops when the given context is cancelled.
 func (s *Service) StartReconnectLoop(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -158,34 +223,43 @@ func (s *Service) StartReconnectLoop(ctx context.Context) {
 			slog.Info("stopping reconnect loop")
 			return
 		case <-ticker.C:
-			s.reconnect(ctx)
+			s.checkAndReconnect(ctx)
 		}
 	}
 }
 
-func (s *Service) reconnect(ctx context.Context) {
+func (s *Service) checkAndReconnect(ctx context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	var newStatus Status = StatusOffline
 	if s.printer != nil {
-		if !s.printer.IsLive(ctx) {
+		if s.printer.IsLive(ctx) {
+			newStatus = StatusOnline
+		} else {
 			slog.Warn("printer is offline, attempting to reconnect", "model", s.model, "address", s.address)
 			if err := s.printer.Reconnect(ctx); err != nil {
 				slog.Error("reconnect failed", "error", err)
 			} else {
 				slog.Info("printer reconnected successfully")
+				newStatus = StatusOnline
 			}
 		}
-		return
+	} else {
+		slog.Info("printer not initialized, attempting to connect", "model", s.model, "backend", s.backend, "address", s.address)
+		newBrd, err := brother_ql.NewLabelPrinter(ctx, s.model, s.backend, s.address)
+		if err == nil {
+			s.printer = newBrd
+			slog.Info("printer connected successfully")
+			newStatus = StatusOnline
+		} else {
+			slog.Error("connection failed", "error", err)
+		}
 	}
 
-	slog.Info("printer not initialized, attempting to connect", "model", s.model, "backend", s.backend, "address", s.address)
-	newBrd, err := brother_ql.NewLabelPrinter(ctx, s.model, s.backend, s.address)
-	if err == nil {
-		s.printer = newBrd
-		slog.Info("printer connected successfully")
-	} else {
-		slog.Error("connection failed", "error", err)
+	if s.status != newStatus {
+		s.status = newStatus
+		go s.broadcast(newStatus)
 	}
 }
 

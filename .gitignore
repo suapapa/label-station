@@ -1,3 +1,5 @@
 .gitignore
 .agents/
+.DS_Store
+.example_labels
 label-station

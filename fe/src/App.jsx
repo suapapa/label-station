@@ -48,16 +48,20 @@ function App() {
   useEffect(() => { localStorage.setItem('rotate', rotate); }, [rotate]);
 
   useEffect(() => {
-    const checkStatus = () => {
-      fetch('/api/v1/ping')
-        .then((res) => res.json())
-        .then((data) => setPrinterStatus(data.status))
-        .catch(() => setPrinterStatus('offline'));
+    const eventSource = new EventSource('/api/v1/events');
+
+    eventSource.addEventListener('status', (e) => {
+      setPrinterStatus(e.data);
+    });
+
+    eventSource.onerror = (e) => {
+      console.error('SSE Error:', e);
+      setPrinterStatus('offline');
     };
 
-    checkStatus();
-    const timer = setInterval(checkStatus, 5000);
-    return () => clearInterval(timer);
+    return () => {
+      eventSource.close();
+    };
   }, []);
 
   useEffect(() => {

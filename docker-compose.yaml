@@ -19,6 +19,9 @@ services:
       # The Go server listens on 8080 by default.
       - PORT=8080
     privileged: true
+    volumes:
+      - /dev:/dev
+
     restart: unless-stopped
 
   # 2. Frontend Production-ready Service (Served via Nginx)
